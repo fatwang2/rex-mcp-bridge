@@ -1,0 +1,22 @@
+# systemd user service for rex-mcp-bridge.
+#
+#   cp rex-mcp-bridge.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now rex-mcp-bridge
+#   journalctl --user -u rex-mcp-bridge -f    # the first run prints a Tailscale sign-in link
+#
+# To keep it running after you log out: sudo loginctl enable-linger $USER
+# Add --hostname NAME to ExecStart to run more than one bridge on a tailnet.
+
+[Unit]
+Description=rex-mcp-bridge: MCP access to Rex terminals
+After=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/rex-mcp-bridge serve
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
