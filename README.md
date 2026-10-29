@@ -36,9 +36,13 @@ It runs on macOS and Linux.
 - For remote agents such as claude.ai: a [Tailscale](https://tailscale.com)
   tailnet with MagicDNS, HTTPS, and Funnel allowed (the default policy
   allows it). Or your own HTTPS reverse proxy.
-- Go 1.27.3 or later to build it.
+- Go 1.27.3 or later, only to build it yourself.
 
 ## Install
+
+Download a binary for macOS or Linux from
+[Releases](https://github.com/fatwang2/rex-mcp-bridge/releases), or build
+it with Go:
 
 ```sh
 go install github.com/fatwang2/rex-mcp-bridge@latest
