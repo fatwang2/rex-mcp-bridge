@@ -109,3 +109,30 @@ func (c *Client) OpenShell(ctx context.Context, host, session, label, cwd string
 	err := c.Script(ctx, host, "open_shell", args, &s, false)
 	return &s, err
 }
+
+// ClosePane closes block, which must be in session agentSession, and ends
+// the program running in it. Its window closes with its last pane.
+func (c *Client) ClosePane(ctx context.Context, host, block, agentSession string) error {
+	var out struct{}
+	return c.Script(ctx, host, "close", map[string]any{"block": block, "agent_session": agentSession}, &out, false)
+}
+
+// Interrupted is a terminal after Ctrl-C.
+type Interrupted struct {
+	Block      string `json:"block"`
+	Exited     bool   `json:"exited"`
+	ExitCode   *int   `json:"exit_code"`
+	Foreground string `json:"foreground"`
+	Output     string `json:"output"`
+}
+
+// Interrupt presses Ctrl-C in block and waits a moment for the program in
+// the foreground to stop. Unless allowAny, the block must be in session
+// agentSession.
+func (c *Client) Interrupt(ctx context.Context, host, block, agentSession string, allowAny bool) (*Interrupted, error) {
+	var r Interrupted
+	err := c.Script(ctx, host, "interrupt", map[string]any{
+		"block": block, "agent_session": agentSession, "allow_any": allowAny,
+	}, &r, false)
+	return &r, err
+}

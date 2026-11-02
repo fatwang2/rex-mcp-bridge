@@ -20,6 +20,8 @@ const (
 	defaultRunTimeout = 60 * time.Second
 	maxRunTimeout     = 10 * time.Minute
 	maxCommandLen     = 8 << 10
+	// interruptLines is how much of the screen interrupt returns.
+	interruptLines = 50
 )
 
 func (b *Bridge) registerRun(server *mcp.Server) {
@@ -33,7 +35,8 @@ func (b *Bridge) registerRun(server *mcp.Server) {
 			"Without pane, the command runs with /bin/sh -c in a new window of the \"" + session + "\" session, " +
 			"which suits one-off commands and long-running servers (with wait false).\n\n" +
 			"By default run waits for the command to finish and returns its exit code and output. " +
-			"A command still running at the timeout keeps running; read it later with capture. " +
+			"A command still running at the timeout keeps running; read it later with capture, and stop it with interrupt. " +
+			"Close windows and shells you no longer need with close_pane. " +
 			"Avoid commands that wait for input, such as password prompts.",
 		Annotations: &mcp.ToolAnnotations{Title: "Run command", DestructiveHint: ptr(true), OpenWorldHint: ptr(true)},
 	}, b.run)
@@ -44,6 +47,22 @@ func (b *Bridge) registerRun(server *mcp.Server) {
 			"for running several commands in one place with run.",
 		Annotations: &mcp.ToolAnnotations{Title: "Open shell", DestructiveHint: ptr(false), OpenWorldHint: ptr(false)},
 	}, b.openShell)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "interrupt",
+		Description: "Press Ctrl-C in a terminal pane to stop the program running in it, such as a command run left running " +
+			"or a server, and return the pane's screen a moment later. A shell stays open, ready for the next run. " +
+			"Panes outside the \"" + session + "\" session need interactive access.",
+		Annotations: &mcp.ToolAnnotations{Title: "Interrupt", DestructiveHint: ptr(true), OpenWorldHint: ptr(false)},
+	}, b.interrupt)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "close_pane",
+		Description: "Close a pane in the \"" + session + "\" session, ending the program running in it, " +
+			"such as a shell from open_shell or a window from run that you no longer need. " +
+			"Its window closes with it. Panes in other sessions cannot be closed.",
+		Annotations: &mcp.ToolAnnotations{Title: "Close pane", DestructiveHint: ptr(true), OpenWorldHint: ptr(false)},
+	}, b.closePane)
 }
 
 type runIn struct {
@@ -137,6 +156,62 @@ func (b *Bridge) openShell(ctx context.Context, req *mcp.CallToolRequest, in ope
 	}
 	b.audit(req, "open-shell host=%s pane=%s cwd=%q", host, s.Block, in.Cwd)
 	return nil, openShellOut{Pane: s.Block, Shell: s.Shell, Ready: s.Ready}, nil
+}
+
+type paneIn struct {
+	Host string `json:"host" jsonschema:"host name from list_hosts"`
+	Pane string `json:"pane" jsonschema:"block ID of the pane"`
+}
+
+type interruptOut struct {
+	Pane       string `json:"pane"`
+	Exited     bool   `json:"exited" jsonschema:"true when the pane's own program has exited, as a command run in a new window does"`
+	ExitCode   *int   `json:"exit_code,omitempty" jsonschema:"the exit status, once exited; -1 for a program a signal stopped"`
+	Foreground string `json:"foreground,omitempty" jsonschema:"the program now in the foreground; a shell such as zsh means it is back at its prompt"`
+	Output     string `json:"output" jsonschema:"the last lines on the pane's screen"`
+	Truncated  bool   `json:"truncated"`
+}
+
+func (b *Bridge) interrupt(ctx context.Context, req *mcp.CallToolRequest, in paneIn) (*mcp.CallToolResult, interruptOut, error) {
+	cfg := b.Config()
+	host := cfg.Canonical(in.Host)
+	if err := b.check(req, host, config.ModeRun); err != nil {
+		return nil, interruptOut{}, err
+	}
+	if in.Pane == "" {
+		return nil, interruptOut{}, errors.New("pane is required; call list_panes to find one")
+	}
+	allowAny := b.grantedMode(req, host).Allows(config.ModeInteractive)
+	r, err := b.Rex.Interrupt(ctx, cfg.RexHost(host), in.Pane, cfg.AgentSession(), allowAny)
+	if err != nil {
+		b.audit(req, "interrupt-failed host=%s pane=%q err=%q", host, in.Pane, err)
+		return nil, interruptOut{}, err
+	}
+	b.audit(req, "interrupt host=%s pane=%s", host, in.Pane)
+	out := interruptOut{Pane: in.Pane, Exited: r.Exited, ExitCode: r.ExitCode, Foreground: r.Foreground}
+	out.Output, out.Truncated = Tail(r.Output, interruptLines, maxOutputBytes)
+	return nil, out, nil
+}
+
+type closePaneOut struct {
+	Closed string `json:"closed" jsonschema:"block ID of the pane closed"`
+}
+
+func (b *Bridge) closePane(ctx context.Context, req *mcp.CallToolRequest, in paneIn) (*mcp.CallToolResult, closePaneOut, error) {
+	cfg := b.Config()
+	host := cfg.Canonical(in.Host)
+	if err := b.check(req, host, config.ModeRun); err != nil {
+		return nil, closePaneOut{}, err
+	}
+	if in.Pane == "" {
+		return nil, closePaneOut{}, errors.New("pane is required; call list_panes to find one")
+	}
+	if err := b.Rex.ClosePane(ctx, cfg.RexHost(host), in.Pane, cfg.AgentSession()); err != nil {
+		b.audit(req, "close-failed host=%s pane=%q err=%q", host, in.Pane, err)
+		return nil, closePaneOut{}, err
+	}
+	b.audit(req, "close host=%s pane=%s", host, in.Pane)
+	return nil, closePaneOut{Closed: in.Pane}, nil
 }
 
 func exitText(r *rex.Result) string {

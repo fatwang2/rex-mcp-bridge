@@ -14,37 +14,23 @@
 --   allow_any      true to allow shells outside the agents' session
 local a = rex.args
 
--- Find the block and the session it is in.
-local sid, in_agents
-each_block(function(s, _, b)
-  if b.block_id == a.block then
-    sid, in_agents = s.session_id, s.label == a.agent_session
-    return true
-  end
-end)
-if sid == nil then error("no pane " .. a.block .. " on this host; call list_panes", 0) end
-if not in_agents and not a.allow_any then
-  error("pane " .. a.block .. " is not in the \"" .. a.agent_session ..
-    "\" session; typing into other panes needs interactive access", 0)
-end
+local sid = find_pane(a.block, a.agent_session, a.allow_any,
+  "typing into other panes needs interactive access")
 
 local p = process(sid, a.block)
 if p.last_exit then error("the program in pane " .. a.block .. " has exited", 0) end
 local fg = p.foreground
 if fg == nil or not shells[fg.name] then
   error("pane " .. a.block .. " is busy running " .. (fg and fg.name or "something") ..
-    "; wait for it, or use capture to see what it is doing", 0)
+    "; wait for it, use capture to see what it is doing, or interrupt to stop it", 0)
 end
 local shell_pid = fg.pid
 
 -- A builtin such as read keeps the shell in the foreground, so also check
 -- that the last command this bridge typed has printed its end marker.
-local before = screen(sid, a.block)
-local last
-for id in before:gmatch("__rmb_s(%x+)") do last = id end
-if last and not before:find("__rmb_e" .. last .. ":", 1, true) then
+if unfinished(screen(sid, a.block)) then
   error("pane " .. a.block .. " is busy: the last command run there has not finished; " ..
-    "use capture to see what it is doing", 0)
+    "use capture to see what it is doing, or interrupt to stop it", 0)
 end
 
 local s1, s2 = "__rmb_s", "__rmb_e"

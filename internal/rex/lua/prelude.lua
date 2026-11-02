@@ -63,3 +63,30 @@ local function each_block(fn)
     end
   end
 end
+
+-- find_pane returns the ID of the session that holds block. Unless
+-- allow_any, the block must be in the agents' session, labeled
+-- agent_session; refused says why another pane is refused.
+local function find_pane(block, agent_session, allow_any, refused)
+  local sid, label
+  each_block(function(s, _, b)
+    if b.block_id == block then
+      sid, label = s.session_id, s.label
+      return true
+    end
+  end)
+  if sid == nil then error("no pane " .. block .. " on this host; call list_panes", 0) end
+  if not allow_any and label ~= agent_session then
+    error("pane " .. block .. " is not in the \"" .. agent_session .. "\" session; " .. refused, 0)
+  end
+  return sid
+end
+
+-- Commands the bridge types into a shell print a start and an end marker;
+-- see shell.lua. unfinished returns the ID of the last command on screen
+-- whose end marker has not been printed, if there is one.
+local function unfinished(text)
+  local last
+  for id in text:gmatch("__rmb_s(%x+)") do last = id end
+  if last and not text:find("__rmb_e" .. last .. ":", 1, true) then return last end
+end

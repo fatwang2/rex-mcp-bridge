@@ -127,6 +127,8 @@ skill and CLI.
 | `capture` | Reads the last lines of a terminal | `read` |
 | `open_shell` | Opens a shell in a new window | `run` |
 | `run` | Runs a command and returns its exit code and output | `run` |
+| `interrupt` | Presses Ctrl-C in a terminal to stop what is running | `run` |
+| `close_pane` | Closes one of the agent's windows or shells | `run` |
 
 `run` works two ways:
 
@@ -141,6 +143,11 @@ It waits up to 60 seconds by default, at most 600. A command still running
 then keeps running, and the agent can read it later with `capture`. Avoid
 commands that prompt for input, such as `sudo` asking for a password.
 
+`interrupt` stops a command the agent left running, such as a server, and
+leaves a shell ready for the next command. `close_pane` ends the program in
+a pane and closes its window; it closes only panes in the agents' session,
+never yours.
+
 Agents' windows and shells go in a Rex session named `mcp` on each machine,
 created when first needed.
 
@@ -150,7 +157,7 @@ created when first needed.
 | --- | --- |
 | `read` | Listing terminals and reading their output, including yours |
 | `run` | Also opening shells and running commands in the agent's own windows and shells |
-| `interactive` | Also running commands in any shell, including the ones you are using |
+| `interactive` | Also running commands in, and interrupting, any shell, including the ones you are using |
 
 `run` runs commands as your account, so it can do anything you can. Keeping
 agents to their own session separates their work from yours and keeps it

@@ -105,6 +105,14 @@ func TestE2E(t *testing.T) {
 			if !strings.Contains(later["text"].(string), "started") {
 				t.Errorf("capture after timeout: %v", later)
 			}
+			// interrupt stops it, and close_pane removes its window.
+			if stopped := mustCall("interrupt", map[string]any{"host": host, "pane": out["pane"]}); stopped["exited"] != true {
+				t.Errorf("interrupt a command in a window: %v", stopped)
+			}
+			mustCall("close_pane", map[string]any{"host": host, "pane": out["pane"]})
+			if hasPane(mustCall("list_panes", map[string]any{"host": host}), out["pane"]) {
+				t.Errorf("close_pane left %v open", out["pane"])
+			}
 
 			// A shell keeps its state between commands.
 			shell := mustCall("open_shell", map[string]any{"host": host})
@@ -136,16 +144,31 @@ func TestE2E(t *testing.T) {
 			if _, errText := call("run", map[string]any{"host": host, "pane": pane, "command": "true"}); !strings.Contains(errText, "busy") {
 				t.Errorf("run in a busy shell: %q", errText)
 			}
-
-			panes := mustCall("list_panes", map[string]any{"host": host})["panes"].([]any)
-			found := false
-			for _, p := range panes {
-				if p.(map[string]any)["session_label"] == "mcp" {
-					found = true
-				}
+			// interrupt stops it, and the shell takes commands again.
+			if stopped := mustCall("interrupt", map[string]any{"host": host, "pane": pane}); stopped["exited"] != false || stopped["foreground"] != shell["shell"] {
+				t.Errorf("interrupt in a shell: %v", stopped)
 			}
-			if !found {
-				t.Error("list_panes does not show the mcp session")
+			if out := mustCall("run", map[string]any{"host": host, "pane": pane, "command": "echo after-interrupt"}); out["exit_code"] != float64(0) || !strings.Contains(out["output"].(string), "after-interrupt") {
+				t.Errorf("run after interrupt: %v", out)
+			}
+			// A command that does not wait for input is stopped as well.
+			if out := mustCall("run", map[string]any{"host": host, "pane": pane, "command": "sleep 30", "timeout_seconds": 1}); out["running"] != true {
+				t.Errorf("sleep in shell: %v", out)
+			}
+			if stopped := mustCall("interrupt", map[string]any{"host": host, "pane": pane}); stopped["foreground"] != shell["shell"] {
+				t.Errorf("interrupt sleep in a shell: %v", stopped)
+			}
+			if out := mustCall("run", map[string]any{"host": host, "pane": pane, "command": "true"}); out["exit_code"] != float64(0) {
+				t.Errorf("run after interrupting sleep: %v", out)
+			}
+
+			panes := mustCall("list_panes", map[string]any{"host": host})
+			if !hasPane(panes, pane) {
+				t.Error("list_panes does not show the shell")
+			}
+			mustCall("close_pane", map[string]any{"host": host, "pane": pane})
+			if hasPane(mustCall("list_panes", map[string]any{"host": host}), pane) {
+				t.Errorf("close_pane left the shell %v open", pane)
 			}
 		})
 	}
@@ -164,8 +187,15 @@ func TestE2E(t *testing.T) {
 		t.Fatalf("rex new: %s", other)
 	}
 	time.Sleep(time.Second)
-	if _, errText := call("run", map[string]any{"host": "local", "pane": created.Windows[0].BlockIDs[0], "command": "echo should-not-run"}); !strings.Contains(errText, "interactive") {
+	otherPane := created.Windows[0].BlockIDs[0]
+	if _, errText := call("run", map[string]any{"host": "local", "pane": otherPane, "command": "echo should-not-run"}); !strings.Contains(errText, "interactive") {
 		t.Errorf("run in a shell outside the agents' session: %q", errText)
+	}
+	if _, errText := call("interrupt", map[string]any{"host": "local", "pane": otherPane}); !strings.Contains(errText, "interactive") {
+		t.Errorf("interrupt outside the agents' session: %q", errText)
+	}
+	if _, errText := call("close_pane", map[string]any{"host": "local", "pane": otherPane}); !strings.Contains(errText, "own session") {
+		t.Errorf("close_pane outside the agents' session: %q", errText)
 	}
 
 	// After the user closes the agents' session, run makes a new one.
@@ -187,6 +217,17 @@ func TestE2E(t *testing.T) {
 	if !strings.Contains(string(audit), `cmd="pwd"`) {
 		t.Errorf("audit log lacks the commands run:\n%s", audit)
 	}
+}
+
+// hasPane reports whether a list_panes result shows block, and that it is
+// in the agents' session.
+func hasPane(out map[string]any, block any) bool {
+	for _, p := range out["panes"].([]any) {
+		if p := p.(map[string]any); p["block_id"] == block && p["session_label"] == "mcp" {
+			return true
+		}
+	}
+	return false
 }
 
 func must(b []byte, err error) []byte {
