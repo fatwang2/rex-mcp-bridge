@@ -65,13 +65,17 @@ type Result struct {
 	Exited   bool   `json:"exited"`
 	ExitCode *int   `json:"exit_code"`
 	Output   string `json:"output"`
+	// Closed is true when RunInWindow closed the window after the command
+	// finished.
+	Closed bool `json:"closed"`
 }
 
 // RunInWindow runs argv in a new window of session, which is created when
-// missing, and waits up to timeout for it to exit. The window stays open.
-func (c *Client) RunInWindow(ctx context.Context, host, session, label, cwd string, argv []string, timeout time.Duration) (*Result, error) {
+// missing, and waits up to timeout for it to exit. If it exits in time, the
+// window is closed, unless keepOpen; otherwise the window stays open.
+func (c *Client) RunInWindow(ctx context.Context, host, session, label, cwd string, argv []string, timeout time.Duration, keepOpen bool) (*Result, error) {
 	var r Result
-	args := map[string]any{"session": session, "label": label, "argv": argv, "timeout": int(timeout.Seconds())}
+	args := map[string]any{"session": session, "label": label, "argv": argv, "timeout": int(timeout.Seconds()), "keep_open": keepOpen}
 	if cwd != "" {
 		args["cwd"] = cwd
 	}

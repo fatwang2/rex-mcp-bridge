@@ -47,12 +47,22 @@ local line = string.format(" printf '%%s%%s\\n' %s %s; %s %s\n%s; printf '%%s%%s
 must(rex.block.call(T, "write", { session_id = sid, block_id = a.block, data = line:gsub("\n", "\r") }))
 
 -- Wait for the shell to come back to the foreground, then look for the end
--- marker on the screen.
+-- marker on the screen. The command may end the shell, as exit does; Rex
+-- then closes the pane.
 local deadline = os.time() + (a.timeout or 0)
-local text, code
+local text, code, closed
 rex.sleep(0.1)
 while true do
-  local q = process(sid, a.block)
+  local q, err = rex.block.call(T, "process", { session_id = sid, block_id = a.block })
+  if q == nil then
+    if pane_exists(a.block) then error(err, 0) end
+    closed = true
+    break
+  end
+  -- Rex leaves the pane open when the shell exits soon after it started.
+  if q.last_exit then
+    return { block = a.block, exited = true, exit_code = q.last_exit.exit_code, output = screen(sid, a.block) }
+  end
   if q.foreground and q.foreground.pid == shell_pid then
     text = screen(sid, a.block)
     local i = text:find(end_mark, 1, true)
@@ -63,6 +73,9 @@ while true do
   end
   if os.time() >= deadline then break end
   rex.sleep(0.2)
+end
+if closed then
+  return { block = a.block, exited = true, output = "", closed = true }
 end
 text = text or screen(sid, a.block)
 

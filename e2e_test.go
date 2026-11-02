@@ -90,6 +90,16 @@ func TestE2E(t *testing.T) {
 				t.Errorf("run: %v", out)
 			}
 			t.Logf("run in a window on %s took %v:\n%s", host, time.Since(start).Round(time.Millisecond), out["output"])
+			// A window whose command finished in time is closed.
+			if out["closed"] != true || hasPane(mustCall("list_panes", map[string]any{"host": host}), out["pane"]) {
+				t.Errorf("run left a finished command's window open: %v", out)
+			}
+			// keep_open keeps it, until close_pane.
+			kept := mustCall("run", map[string]any{"host": host, "command": "echo kept", "keep_open": true})
+			if kept["closed"] == true || !hasPane(mustCall("list_panes", map[string]any{"host": host}), kept["pane"]) {
+				t.Errorf("run with keep_open closed its window: %v", kept)
+			}
+			mustCall("close_pane", map[string]any{"host": host, "pane": kept["pane"]})
 
 			out = mustCall("run", map[string]any{"host": host, "command": "pwd", "cwd": "/tmp"})
 			if !strings.Contains(out["output"].(string), "/tmp") || out["exit_code"] != float64(0) {
@@ -97,7 +107,7 @@ func TestE2E(t *testing.T) {
 			}
 
 			out = mustCall("run", map[string]any{"host": host, "command": "echo started; sleep 20", "timeout_seconds": 2})
-			if out["running"] != true || out["exit_code"] != nil || !strings.Contains(out["output"].(string), "started") {
+			if out["running"] != true || out["closed"] == true || out["exit_code"] != nil || !strings.Contains(out["output"].(string), "started") {
 				t.Errorf("run past timeout: %v", out)
 			}
 			// The command keeps running and can be read later.
@@ -169,6 +179,17 @@ func TestE2E(t *testing.T) {
 			mustCall("close_pane", map[string]any{"host": host, "pane": pane})
 			if hasPane(mustCall("list_panes", map[string]any{"host": host}), pane) {
 				t.Errorf("close_pane left the shell %v open", pane)
+			}
+
+			// A shell's window closes when the shell exits. Rex keeps it
+			// open if the shell exits just after starting, so wait first.
+			shell = mustCall("open_shell", map[string]any{"host": host})
+			mustCall("run", map[string]any{"host": host, "pane": shell["pane"], "command": "sleep 1"})
+			if out := mustCall("run", map[string]any{"host": host, "pane": shell["pane"], "command": "exit", "timeout_seconds": 10}); out["closed"] != true {
+				t.Errorf("exit in a shell: %v", out)
+			}
+			if hasPane(mustCall("list_panes", map[string]any{"host": host}), shell["pane"]) {
+				t.Errorf("the shell's window stayed open after exit")
 			}
 		})
 	}

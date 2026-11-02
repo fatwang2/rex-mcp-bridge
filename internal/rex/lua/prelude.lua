@@ -21,15 +21,19 @@ local function agent_session(label)
 end
 
 -- new_terminal opens a window running argv, or an interactive shell when
--- argv is nil, and returns the block ID.
-local function new_terminal(sid, label, argv, cwd)
+-- argv is nil, and returns the block ID. Unless keep_open, the window closes
+-- when its program exits, as Rex's own windows do, except after a quick
+-- failure, which Rex leaves open so the error can be read.
+local function new_terminal(sid, label, argv, cwd, keep_open)
+  local exit
+  if keep_open then exit = { on_completion = false } end
   local w = must(rex.session.new_window{
     session_id   = sid,
     focus        = false,
     window_label = label,
     layout       = rex.layout.block{
       flavor  = "com.superlogical.terminal.shell",
-      options = { command = argv, cwd = cwd, exit = { on_completion = false } },
+      options = { command = argv, cwd = cwd, exit = exit },
     },
   })
   return w.block_ids[1]
@@ -62,6 +66,18 @@ local function each_block(fn)
       end
     end
   end
+end
+
+-- pane_exists reports whether block is in any session.
+local function pane_exists(block)
+  local found = false
+  each_block(function(_, _, b)
+    if b.block_id == block then
+      found = true
+      return true
+    end
+  end)
+  return found
 end
 
 -- find_pane returns the ID of the session that holds block. Unless

@@ -1,5 +1,6 @@
 -- Opens an interactive shell in a new window of the agents' session and
--- waits for it to reach its prompt. Arguments (rex.args):
+-- waits for it to reach its prompt. The window stays until it is closed or
+-- the shell exits. Arguments (rex.args):
 --   session  label of the agents' session
 --   label    window label
 --   cwd      working directory, or nil

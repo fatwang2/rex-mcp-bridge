@@ -29,14 +29,16 @@ func (b *Bridge) registerRun(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "run",
 		Description: "Run a shell command on a host, where the user can watch it in Rex and take over.\n\n" +
+			"Without pane, the command runs with /bin/sh -c in a new window of the \"" + session + "\" session. " +
+			"If it finishes before run returns, its window closes once the output is read, unless keep_open is true. " +
+			"If it is still running, as at the timeout or with wait false, the window stays open, also after the command " +
+			"finishes later: read it with capture, stop it with interrupt, and close it with close_pane when you are done. " +
+			"This suits one-off commands and long-running servers (with wait false).\n\n" +
 			"With pane, the command is typed into that shell, which must be at its prompt. The shell keeps its state " +
-			"between commands, so cd, exported variables, and activated environments carry over. Open one with open_shell. " +
+			"between commands, so cd, exported variables, and activated environments carry over. " +
+			"To run several commands, open one shell with open_shell and pass it as pane, rather than opening a window for each. " +
 			"Shells outside the \"" + session + "\" session need interactive access.\n\n" +
-			"Without pane, the command runs with /bin/sh -c in a new window of the \"" + session + "\" session, " +
-			"which suits one-off commands and long-running servers (with wait false).\n\n" +
 			"By default run waits for the command to finish and returns its exit code and output. " +
-			"A command still running at the timeout keeps running; read it later with capture, and stop it with interrupt. " +
-			"Close windows and shells you no longer need with close_pane. " +
 			"Avoid commands that wait for input, such as password prompts.",
 		Annotations: &mcp.ToolAnnotations{Title: "Run command", DestructiveHint: ptr(true), OpenWorldHint: ptr(true)},
 	}, b.run)
@@ -44,40 +46,46 @@ func (b *Bridge) registerRun(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "open_shell",
 		Description: "Open an interactive shell in a new window of the \"" + session + "\" session on a host and return its pane, " +
-			"for running several commands in one place with run.",
+			"for running several commands in one place with run. The window stays open until the shell exits or you " +
+			"close it: call close_pane when you have finished with it.",
 		Annotations: &mcp.ToolAnnotations{Title: "Open shell", DestructiveHint: ptr(false), OpenWorldHint: ptr(false)},
 	}, b.openShell)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "interrupt",
 		Description: "Press Ctrl-C in a terminal pane to stop the program running in it, such as a command run left running " +
-			"or a server, and return the pane's screen a moment later. A shell stays open, ready for the next run. " +
+			"or a server, and return the pane's screen a moment later. It does not close the pane: a shell stays open, " +
+			"ready for the next run, and a window from run stays open with its output until you close it with close_pane. " +
 			"Panes outside the \"" + session + "\" session need interactive access.",
 		Annotations: &mcp.ToolAnnotations{Title: "Interrupt", DestructiveHint: ptr(true), OpenWorldHint: ptr(false)},
 	}, b.interrupt)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "close_pane",
-		Description: "Close a pane in the \"" + session + "\" session, ending the program running in it, " +
-			"such as a shell from open_shell or a window from run that you no longer need. " +
-			"Its window closes with it. Panes in other sessions cannot be closed.",
+		Description: "Close a pane in the \"" + session + "\" session and its window, ending the program running in it. " +
+			"Close what you opened once you no longer need it, so the user's view stays tidy: " +
+			"shells from open_shell, windows from run that were still running when run returned or that you kept with keep_open, " +
+			"and windows you interrupted. Windows of commands that finished before run returned are already closed. " +
+			"Panes in other sessions cannot be closed.",
 		Annotations: &mcp.ToolAnnotations{Title: "Close pane", DestructiveHint: ptr(true), OpenWorldHint: ptr(false)},
 	}, b.closePane)
 }
 
 type runIn struct {
-	Host    string `json:"host" jsonschema:"host name from list_hosts"`
-	Command string `json:"command" jsonschema:"shell command line"`
-	Pane    string `json:"pane,omitempty" jsonschema:"block ID of a shell to type the command into; leave out to run it in a new window"`
-	Cwd     string `json:"cwd,omitempty" jsonschema:"working directory for a new window; default is the home directory. Ignored with pane: use cd"`
-	Timeout int    `json:"timeout_seconds,omitempty" jsonschema:"how long to wait for the command to finish; default 60, at most 600"`
-	Wait    *bool  `json:"wait,omitempty" jsonschema:"false returns once the command has started; default true"`
-	Lines   int    `json:"lines,omitempty" jsonschema:"how many of the last output lines to return; default 200, at most 2000"`
+	Host     string `json:"host" jsonschema:"host name from list_hosts"`
+	Command  string `json:"command" jsonschema:"shell command line"`
+	Pane     string `json:"pane,omitempty" jsonschema:"block ID of a shell to type the command into; leave out to run it in a new window"`
+	Cwd      string `json:"cwd,omitempty" jsonschema:"working directory for a new window; default is the home directory. Ignored with pane: use cd"`
+	Timeout  int    `json:"timeout_seconds,omitempty" jsonschema:"how long to wait for the command to finish; default 60, at most 600"`
+	Wait     *bool  `json:"wait,omitempty" jsonschema:"false returns once the command has started; default true"`
+	Lines    int    `json:"lines,omitempty" jsonschema:"how many of the last output lines to return; default 200, at most 2000"`
+	KeepOpen bool   `json:"keep_open,omitempty" jsonschema:"true keeps a new window open after its command finishes, for the user to look at; close it with close_pane later. Default false. Ignored with pane"`
 }
 
 type runOut struct {
-	Pane      string `json:"pane" jsonschema:"block ID of the terminal, for capture or another run"`
+	Pane      string `json:"pane" jsonschema:"block ID of the terminal, for capture or another run, unless closed is true"`
 	Running   bool   `json:"running" jsonschema:"true when the command had not finished when this returned"`
+	Closed    bool   `json:"closed,omitempty" jsonschema:"true when the pane no longer exists: a new window closes when its command finishes in time, and a shell's window closes when the shell exits"`
 	ExitCode  *int   `json:"exit_code,omitempty" jsonschema:"the command's exit status, once it has finished"`
 	Output    string `json:"output"`
 	Truncated bool   `json:"truncated" jsonschema:"true when earlier output lines were left out"`
@@ -120,7 +128,7 @@ func (b *Bridge) run(ctx context.Context, req *mcp.CallToolRequest, in runIn) (*
 		allowAny := b.grantedMode(req, host).Allows(config.ModeInteractive)
 		r, err = b.Rex.RunInShell(ctx, cfg.RexHost(host), in.Pane, command, markerID(), session, allowAny, timeout)
 	} else {
-		r, err = b.Rex.RunInWindow(ctx, cfg.RexHost(host), session, windowLabel(command), in.Cwd, []string{"/bin/sh", "-c", command}, timeout)
+		r, err = b.Rex.RunInWindow(ctx, cfg.RexHost(host), session, windowLabel(command), in.Cwd, []string{"/bin/sh", "-c", command}, timeout, in.KeepOpen)
 	}
 	if err != nil {
 		b.audit(req, "run-failed host=%s pane=%q cmd=%q err=%q", host, in.Pane, command, err)
@@ -128,7 +136,7 @@ func (b *Bridge) run(ctx context.Context, req *mcp.CallToolRequest, in runIn) (*
 	}
 	b.audit(req, "run host=%s pane=%s cmd=%q exit=%s", host, r.Block, command, exitText(r))
 
-	out := runOut{Pane: r.Block, Running: !r.Exited, ExitCode: r.ExitCode}
+	out := runOut{Pane: r.Block, Running: !r.Exited, Closed: r.Closed, ExitCode: r.ExitCode}
 	out.Output, out.Truncated = Tail(r.Output, lines, maxOutputBytes)
 	return nil, out, nil
 }
@@ -216,6 +224,9 @@ func (b *Bridge) closePane(ctx context.Context, req *mcp.CallToolRequest, in pan
 
 func exitText(r *rex.Result) string {
 	if r.ExitCode == nil {
+		if r.Closed {
+			return "closed"
+		}
 		return "running"
 	}
 	return fmt.Sprint(*r.ExitCode)

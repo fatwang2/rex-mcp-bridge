@@ -143,10 +143,20 @@ It waits up to 60 seconds by default, at most 600. A command still running
 then keeps running, and the agent can read it later with `capture`. Avoid
 commands that prompt for input, such as `sudo` asking for a password.
 
+Windows close the way Rex's own do, so agents' work does not pile up:
+
+- A new window whose command finishes before `run` returns closes once its
+  output is read, like `rex run`. With `keep_open`, like `rex run
+  --keep-open`, it stays.
+- A window whose command is still running stays open, also after the
+  command finishes later, until the agent closes it.
+- A shell from `open_shell` stays open until it exits or the agent closes it.
+
 `interrupt` stops a command the agent left running, such as a server, and
 leaves a shell ready for the next command. `close_pane` ends the program in
 a pane and closes its window; it closes only panes in the agents' session,
-never yours.
+never yours. The tool descriptions tell agents which windows they need to
+close themselves.
 
 Agents' windows and shells go in a Rex session named `mcp` on each machine,
 created when first needed.
